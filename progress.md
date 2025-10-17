@@ -6,3 +6,5 @@
 * 1.2 Configuring Environment
 * 1.3 Retrieval
 * 1.4 Generating Answers
+* 1.5 RAG Flow
+* 1.6 Elasticsearch

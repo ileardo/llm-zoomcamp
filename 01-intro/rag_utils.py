@@ -6,11 +6,14 @@ performing searches, building prompts, and interacting with language models.
 """
 
 from typing import List, Dict, Optional, Any
+from elasticsearch import Elasticsearch
+from tqdm.auto import tqdm
+
 import minsearch
 import json
 
 
-def load_and_indexknowledge_base(file_path: str) -> minsearch.Index:
+def minsearch_index(file_path: str) -> minsearch.Index:
     """
     Load a knowledge base from a JSON file and create a searchable index.
 
@@ -26,7 +29,7 @@ def load_and_indexknowledge_base(file_path: str) -> minsearch.Index:
         A fitted minsearch.Index object ready for searching.
 
     Example:
-        >>> index = load_and_indexknowledge_base('documents.json')
+        >>> index = minsearch_index('documents.json')
         >>> results = index.search('How do I install Python?')
     """
     with open(file_path, 'rt') as f_in:
@@ -44,6 +47,70 @@ def load_and_indexknowledge_base(file_path: str) -> minsearch.Index:
     )
     index.fit(knowledge_base)
     return index
+
+
+def elasticsearch_index(file_path: str, es_url: str = 'http://localhost:9200') -> Elasticsearch:
+    """
+    Load a knowledge base from a JSON file and create an Elasticsearch index.
+
+    Args:
+        file_path: Path to the JSON file containing the knowledge base.
+                  Expected format: list of dicts with 'course' and 'documents' keys.
+        es_url: URL of the Elasticsearch instance. Default is 'http://localhost:9200'.
+
+    Returns:
+        An Elasticsearch client instance connected to the server with the index created.
+
+    Raises:
+        FileNotFoundError: If the specified file_path does not exist.
+        json.JSONDecodeError: If the file contains invalid JSON.
+        elasticsearch.exceptions.ConnectionError: If unable to connect to Elasticsearch.
+
+    Example:
+        >>> es_client = elasticsearch_index('documents.json')
+        >>> # Now you can use es_client to search the index
+    """
+    with open(file_path, 'rt') as f_in:
+        docs_raw = json.load(f_in)
+
+    knowledge_base = []
+    for course_dict in docs_raw:
+        for doc in course_dict['documents']:
+            doc['course'] = course_dict['course']
+            knowledge_base.append(doc)
+
+    es_client = Elasticsearch(es_url)
+
+    index_settings = {
+        "settings": {
+            "number_of_shards": 1,
+            "number_of_replicas": 0
+        },
+        "mappings": {
+            "properties": {
+                "text": {"type": "text"},
+                "section": {"type": "text"},
+                "question": {"type": "text"},
+                "course": {"type": "keyword"}
+            }
+        }
+    }
+
+    index_name = "course-questions"
+
+    try:
+        es_client.indices.create(index=index_name, body=index_settings)
+    except Exception as e:
+        if 'resource_already_exists_exception' in str(e):
+            es_client.indices.delete(index=index_name)
+            es_client.indices.create(index=index_name, body=index_settings)
+        else:
+            raise
+
+    for doc in tqdm(knowledge_base):
+        es_client.index(index=index_name, document=doc)
+
+    return es_client
 
 
 def search(
@@ -81,6 +148,37 @@ def search(
         num_results=top_k
     )
     return results
+
+
+def elastic_search(query, es_client, index_name='course-questions'):
+    search_query = {
+        "size": 5,
+        "query": {
+            "bool": {
+                "must": {
+                    "multi_match": {
+                        "query": query,
+                        "fields": ["question^3", "text", "section"],
+                        "type": "best_fields"
+                    }
+                },
+                "filter": {
+                    "term": {
+                        "course": "data-engineering-zoomcamp"
+                    }
+                }
+            }
+        }
+    }
+
+    response = es_client.search(index=index_name, body=search_query)
+    
+    result_docs = []
+    
+    for hit in response['hits']['hits']:
+        result_docs.append(hit['_source'])
+    
+    return result_docs
 
 
 def build_prompt(query: str, search_results: List[Dict[str, Any]]) -> str:
