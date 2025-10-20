@@ -8,3 +8,7 @@
 * 1.4 Generating Answers
 * 1.5 RAG Flow
 * 1.6 Elasticsearch
+
+## Module 2: Vector Search
+
+* 2.1 Getting Started with Vector Search and Qdrant
